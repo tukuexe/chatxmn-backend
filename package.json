@@ -1,0 +1,20 @@
+{
+  "name": "chatxmn-backend",
+  "version": "1.0.0",
+  "description": "ChatXMN Backend with MongoDB",
+  "main": "api/chat.js",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "mongodb": "^5.8.0"
+  },
+  "devDependencies": {
+    "vercel": "^32.0.0"
+  },
+  "engines": {
+    "node": ">=18.x"
+  },
+  "author": "xmn",
+  "license": "MIT"
+}
