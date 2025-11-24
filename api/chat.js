@@ -6,7 +6,7 @@ const ADMIN_CHAT_ID = "6142816761";
 
 // Your MongoDB connection string
 const MONGODB_URI = "mongodb+srv://xmn:7T3GWR4QZKbXKwNp@xmnchat.htmckjn.mongodb.net/?appName=xmnchat";
-const DB_NAME = "chatxmn";
+const DB_NAME = "xmnchat";
 
 let client;
 let userSessions = {};
