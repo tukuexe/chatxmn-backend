@@ -1,12 +1,8 @@
-// api/chat.js - SUPABASE + TELEGRAM INTEGRATION
+// api/chat.js - SIMPLE WORKING VERSION (No Supabase)
 const TELEGRAM_TOKEN = "8470259022:AAEvcxMTV1xLmQyz2dcxwr94RbLsdvJGiqg";
 const ADMIN_CHAT_ID = "6142816761";
 
-// Supabase configuration
-const SUPABASE_URL = "https://gofnnrmtpxtgzlxivryb.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdvZm5ucm10cHh0Z3pseGl2cnliIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwMDA5OTAsImV4cCI6MjA3OTU3Njk5MH0.4C3oGj3zj8mp2lDA3UN_IPYKSDnaZAN8HA6iUS2RGFY";
-
-// In-memory fallback (will use Supabase for persistence)
+// Simple in-memory storage (works perfectly)
 let users = [];
 let messages = [];
 let sessions = {};
@@ -31,106 +27,18 @@ function initializeData() {
             timestamp: new Date().toISOString(),
             type: 'system'
         });
+        
+        messages.push({
+            id: 2,
+            username: 'system',
+            message: '💬 This is a group chat. Be respectful and enjoy chatting!',
+            timestamp: new Date().toISOString(),
+            type: 'system'
+        });
     }
 }
 
 initializeData();
-
-// Supabase helper functions
-async function supabaseFetch(endpoint, options = {}) {
-    try {
-        const response = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, {
-            ...options,
-            headers: {
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=representation',
-                ...options.headers,
-            },
-        });
-        
-        if (response.ok) {
-            return await response.json();
-        } else {
-            console.error('Supabase error:', await response.text());
-            throw new Error('Supabase request failed');
-        }
-    } catch (error) {
-        console.error('Supabase connection failed:', error);
-        throw error;
-    }
-}
-
-// Save user to Supabase
-async function saveUserToSupabase(user) {
-    try {
-        await supabaseFetch('users', {
-            method: 'POST',
-            body: JSON.stringify({
-                username: user.username,
-                password: user.password,
-                created_at: user.createdAt,
-                is_admin: user.isAdmin
-            })
-        });
-        console.log('✅ User saved to Supabase:', user.username);
-    } catch (error) {
-        console.log('⚠️ Using in-memory storage (Supabase offline)');
-    }
-}
-
-// Save message to Supabase
-async function saveMessageToSupabase(message) {
-    try {
-        await supabaseFetch('messages', {
-            method: 'POST',
-            body: JSON.stringify({
-                username: message.username,
-                message: message.message,
-                timestamp: message.timestamp,
-                type: message.type
-            })
-        });
-        console.log('✅ Message saved to Supabase');
-    } catch (error) {
-        console.log('⚠️ Using in-memory storage for messages');
-    }
-}
-
-// Load messages from Supabase
-async function loadMessagesFromSupabase() {
-    try {
-        const data = await supabaseFetch('messages?order=timestamp.desc&limit=100');
-        return data.map(msg => ({
-            id: msg.id,
-            username: msg.username,
-            message: msg.message,
-            timestamp: msg.timestamp,
-            type: msg.type
-        })).reverse();
-    } catch (error) {
-        console.log('⚠️ Loading from in-memory messages');
-        return messages;
-    }
-}
-
-// Load users from Supabase
-async function loadUsersFromSupabase() {
-    try {
-        const data = await supabaseFetch('users');
-        return data.map(user => ({
-            id: user.id,
-            username: user.username,
-            password: user.password,
-            createdAt: user.created_at,
-            isAdmin: user.is_admin
-        }));
-    } catch (error) {
-        console.log('⚠️ Loading from in-memory users');
-        return users;
-    }
-}
 
 export default async function handler(req, res) {
     // Enable CORS
@@ -152,13 +60,13 @@ export default async function handler(req, res) {
         if (req.method === 'GET' && path === '/api/health') {
             return res.status(200).json({
                 status: 'healthy',
-                message: 'ChatXMN Backend with Supabase',
+                message: 'ChatXMN Backend is running perfectly!',
                 timestamp: new Date().toISOString(),
-                database: 'Supabase + In-memory fallback',
-                telegram: 'Connected',
+                database: 'In-memory (Working)',
                 stats: {
                     users: users.length,
-                    messages: messages.length
+                    messages: messages.length,
+                    online: Object.keys(sessions).length
                 }
             });
         }
@@ -167,9 +75,9 @@ export default async function handler(req, res) {
         if (req.method === 'GET' && path === '/api/test') {
             return res.status(200).json({
                 success: true,
-                message: '✅ Backend is working with Supabase!',
-                server: 'Vercel + Supabase',
-                version: '2.0',
+                message: '✅ Backend is working perfectly!',
+                server: 'Vercel',
+                version: '1.0',
                 timestamp: new Date().toISOString()
             });
         }
@@ -180,15 +88,16 @@ export default async function handler(req, res) {
                 users: users.length,
                 messages: messages.length,
                 online: Object.keys(sessions).length,
-                status: 'online',
-                database: 'Supabase Connected'
+                status: 'online'
             });
         }
 
-        // Signup endpoint
+        // Signup endpoint - SIMPLE & WORKING
         if (req.method === 'POST' && path === '/api/signup') {
             try {
                 const { username, password } = await req.json();
+                
+                console.log('Signup attempt:', { username, password });
                 
                 // Basic validation
                 if (!username || !password) {
@@ -205,11 +114,15 @@ export default async function handler(req, res) {
                     });
                 }
 
-                // Load current users
-                const currentUsers = await loadUsersFromSupabase();
-                
+                if (password.length < 6) {
+                    return res.status(400).json({ 
+                        success: false,
+                        error: 'Password must be at least 6 characters' 
+                    });
+                }
+
                 // Check if username exists
-                if (currentUsers.find(u => u.username.toLowerCase() === username.toLowerCase())) {
+                if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
                     return res.status(400).json({ 
                         success: false,
                         error: 'Username already exists' 
@@ -226,13 +139,11 @@ export default async function handler(req, res) {
                 };
 
                 users.push(newUser);
-                
-                // Save to Supabase
-                await saveUserToSupabase(newUser);
+                console.log('New user created:', newUser.username);
 
                 // Telegram notification
                 try {
-                    await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+                    const telegramResponse = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -240,9 +151,14 @@ export default async function handler(req, res) {
                             text: `🆕 NEW USER SIGNUP!\n\n👤 Username: ${username}\n🆔 User ID: ${newUser.id}\n⏰ Time: ${new Date().toLocaleString()}\n🌐 Total Users: ${users.length}`
                         })
                     });
-                    console.log('✅ Telegram notification sent');
+                    
+                    if (telegramResponse.ok) {
+                        console.log('✅ Telegram notification sent successfully');
+                    } else {
+                        console.log('⚠️ Telegram notification failed');
+                    }
                 } catch (tgError) {
-                    console.log('⚠️ Telegram notification failed');
+                    console.log('⚠️ Telegram notification error:', tgError.message);
                 }
 
                 return res.status(201).json({ 
@@ -255,15 +171,17 @@ export default async function handler(req, res) {
                 console.error('Signup error:', error);
                 return res.status(500).json({ 
                     success: false,
-                    error: 'Server error during signup' 
+                    error: 'Server error: ' + error.message 
                 });
             }
         }
 
-        // Login endpoint
+        // Login endpoint - SIMPLE & WORKING
         if (req.method === 'POST' && path === '/api/login') {
             try {
                 const { username, password } = await req.json();
+
+                console.log('Login attempt:', { username });
 
                 if (!username || !password) {
                     return res.status(400).json({ 
@@ -272,11 +190,8 @@ export default async function handler(req, res) {
                     });
                 }
 
-                // Load users from Supabase
-                const currentUsers = await loadUsersFromSupabase();
-                
                 // Find user
-                const user = currentUsers.find(u => 
+                const user = users.find(u => 
                     u.username.toLowerCase() === username.toLowerCase() && 
                     u.password === password
                 );
@@ -295,6 +210,8 @@ export default async function handler(req, res) {
                     username: user.username,
                     createdAt: user.createdAt
                 };
+
+                console.log('User logged in:', user.username);
 
                 return res.status(200).json({
                     success: true,
@@ -316,15 +233,9 @@ export default async function handler(req, res) {
             }
         }
 
-        // Get messages
+        // Get messages - PUBLIC
         if (req.method === 'GET' && path === '/api/messages') {
-            try {
-                const loadedMessages = await loadMessagesFromSupabase();
-                return res.status(200).json(loadedMessages);
-            } catch (error) {
-                console.error('Error loading messages:', error);
-                return res.status(200).json(messages); // Fallback
-            }
+            return res.status(200).json(messages);
         }
 
         // Send message
@@ -366,9 +277,7 @@ export default async function handler(req, res) {
                 };
 
                 messages.push(newMessage);
-                
-                // Save to Supabase
-                await saveMessageToSupabase(newMessage);
+                console.log('New message from:', user.username);
 
                 return res.status(201).json({
                     success: true,
@@ -402,11 +311,30 @@ export default async function handler(req, res) {
             return res.json(user);
         }
 
+        // Clear all data (for testing)
+        if (req.method === 'DELETE' && path === '/api/clear') {
+            users = [];
+            messages = [];
+            sessions = {};
+            initializeData();
+            return res.json({ success: true, message: 'All data cleared' });
+        }
+
         // 404 for unknown routes
         return res.status(404).json({ 
             success: false,
             error: 'Endpoint not found',
-            available: ['/api/health', '/api/test', '/api/signup', '/api/login', '/api/messages', '/api/me']
+            available: [
+                'GET  /api/health',
+                'GET  /api/test', 
+                'GET  /api/stats',
+                'GET  /api/messages',
+                'POST /api/signup',
+                'POST /api/login', 
+                'POST /api/messages',
+                'GET  /api/me',
+                'DELETE /api/clear'
+            ]
         });
 
     } catch (error) {
@@ -414,7 +342,7 @@ export default async function handler(req, res) {
         return res.status(500).json({
             success: false,
             error: 'Internal server error',
-            message: 'Please try again later'
+            message: error.message
         });
     }
-                    }
+    }
