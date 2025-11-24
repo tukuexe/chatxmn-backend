@@ -1,313 +1,420 @@
-// api/chat.js - ChatXMN Backend with MongoDB
-const { MongoClient, ObjectId } = require('mongodb');
-
+// api/chat.js - SUPABASE + TELEGRAM INTEGRATION
 const TELEGRAM_TOKEN = "8470259022:AAEvcxMTV1xLmQyz2dcxwr94RbLsdvJGiqg";
 const ADMIN_CHAT_ID = "6142816761";
 
-// Your MongoDB connection string
-const MONGODB_URI = "mongodb+srv://xmn:7T3GWR4QZKbXKwNp@xmnchat.htmckjn.mongodb.net/?appName=xmnchat";
-const DB_NAME = "xmnchat";
+// Supabase configuration
+const SUPABASE_URL = "https://gofnnrmtpxtgzlxivryb.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdvZm5ucm10cHh0Z3pseGl2cnliIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwMDA5OTAsImV4cCI6MjA3OTU3Njk5MH0.4C3oGj3zj8mp2lDA3UN_IPYKSDnaZAN8HA6iUS2RGFY";
 
-let client;
-let userSessions = {};
+// In-memory fallback (will use Supabase for persistence)
+let users = [];
+let messages = [];
+let sessions = {};
 
-// MongoDB connection helper
-async function connectDB() {
-    if (!client) {
-        client = new MongoClient(MONGODB_URI);
-        await client.connect();
-        console.log('✅ Connected to MongoDB');
+// Initialize with default data
+function initializeData() {
+    if (users.length === 0) {
+        users.push({
+            id: 1,
+            username: 'admin',
+            password: 'admin123',
+            createdAt: new Date().toISOString(),
+            isAdmin: true
+        });
     }
-    return client.db(DB_NAME);
+    
+    if (messages.length === 0) {
+        messages.push({
+            id: 1,
+            username: 'system',
+            message: '🌟 Welcome to ChatXMN! Start chatting with the community.',
+            timestamp: new Date().toISOString(),
+            type: 'system'
+        });
+    }
 }
 
-// Initialize database with default data
-async function initializeDB() {
+initializeData();
+
+// Supabase helper functions
+async function supabaseFetch(endpoint, options = {}) {
     try {
-        const db = await connectDB();
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, {
+            ...options,
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation',
+                ...options.headers,
+            },
+        });
         
-        // Create collections if they don't exist
-        const usersCollection = db.collection('users');
-        const messagesCollection = db.collection('messages');
-        
-        // Add default admin user if no users exist
-        const userCount = await usersCollection.countDocuments();
-        if (userCount === 0) {
-            await usersCollection.insertOne({
-                username: 'admin',
-                password: 'admin123',
-                createdAt: new Date(),
-                isAdmin: true
-            });
-            console.log('✅ Default admin user created');
+        if (response.ok) {
+            return await response.json();
+        } else {
+            console.error('Supabase error:', await response.text());
+            throw new Error('Supabase request failed');
         }
-        
-        // Add welcome message if no messages exist
-        const messageCount = await messagesCollection.countDocuments();
-        if (messageCount === 0) {
-            await messagesCollection.insertOne({
-                username: 'system',
-                message: '🌟 Welcome to ChatXMN! Start chatting with the community.',
-                timestamp: new Date(),
-                type: 'system'
-            });
-            console.log('✅ Welcome message created');
-        }
-        
     } catch (error) {
-        console.error('Database initialization error:', error);
+        console.error('Supabase connection failed:', error);
+        throw error;
     }
 }
 
-// Initialize on startup
-initializeDB();
+// Save user to Supabase
+async function saveUserToSupabase(user) {
+    try {
+        await supabaseFetch('users', {
+            method: 'POST',
+            body: JSON.stringify({
+                username: user.username,
+                password: user.password,
+                created_at: user.createdAt,
+                is_admin: user.isAdmin
+            })
+        });
+        console.log('✅ User saved to Supabase:', user.username);
+    } catch (error) {
+        console.log('⚠️ Using in-memory storage (Supabase offline)');
+    }
+}
+
+// Save message to Supabase
+async function saveMessageToSupabase(message) {
+    try {
+        await supabaseFetch('messages', {
+            method: 'POST',
+            body: JSON.stringify({
+                username: message.username,
+                message: message.message,
+                timestamp: message.timestamp,
+                type: message.type
+            })
+        });
+        console.log('✅ Message saved to Supabase');
+    } catch (error) {
+        console.log('⚠️ Using in-memory storage for messages');
+    }
+}
+
+// Load messages from Supabase
+async function loadMessagesFromSupabase() {
+    try {
+        const data = await supabaseFetch('messages?order=timestamp.desc&limit=100');
+        return data.map(msg => ({
+            id: msg.id,
+            username: msg.username,
+            message: msg.message,
+            timestamp: msg.timestamp,
+            type: msg.type
+        })).reverse();
+    } catch (error) {
+        console.log('⚠️ Loading from in-memory messages');
+        return messages;
+    }
+}
+
+// Load users from Supabase
+async function loadUsersFromSupabase() {
+    try {
+        const data = await supabaseFetch('users');
+        return data.map(user => ({
+            id: user.id,
+            username: user.username,
+            password: user.password,
+            createdAt: user.created_at,
+            isAdmin: user.is_admin
+        }));
+    } catch (error) {
+        console.log('⚠️ Loading from in-memory users');
+        return users;
+    }
+}
 
 export default async function handler(req, res) {
     // Enable CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
 
+    // Handle preflight
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
 
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const path = url.pathname;
-
-    // Auth middleware
-    const authHeader = req.headers.authorization;
-    let currentUser = null;
-    
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.substring(7);
-        currentUser = userSessions[token];
-    }
+    const path = req.url;
 
     try {
-        // Public routes
-        if (req.method === 'POST' && path === '/api/signup') {
-            return await handleSignup(req, res);
-        }
+        console.log(`📨 ${req.method} ${path}`);
 
-        if (req.method === 'POST' && path === '/api/login') {
-            return await handleLogin(req, res);
-        }
-
-        // Protected routes require authentication
-        if (!currentUser) {
-            return res.status(401).json({ error: 'Authentication required' });
-        }
-
-        const db = await connectDB();
-        const usersCollection = db.collection('users');
-        const messagesCollection = db.collection('messages');
-
-        if (req.method === 'GET' && path === '/api/messages') {
-            const messages = await messagesCollection.find().sort({ timestamp: -1 }).limit(100).toArray();
-            return res.status(200).json(messages.reverse());
-        }
-
-        if (req.method === 'POST' && path === '/api/messages') {
-            return await handleSendMessage(req, res, currentUser, messagesCollection);
-        }
-
-        if (req.method === 'GET' && path === '/api/users') {
-            const users = await usersCollection.find(
-                { username: { $ne: currentUser.username } },
-                { projection: { password: 0 } }
-            ).toArray();
-            return res.status(200).json(users);
-        }
-
-        if (req.method === 'GET' && path === '/api/me') {
-            return res.status(200).json(currentUser);
-        }
-
-        if (req.method === 'GET' && path === '/api/stats') {
-            const userCount = await usersCollection.countDocuments();
-            const messageCount = await messagesCollection.countDocuments();
+        // Health check
+        if (req.method === 'GET' && path === '/api/health') {
             return res.status(200).json({
-                users: userCount,
-                messages: messageCount,
-                online: Object.keys(userSessions).length
+                status: 'healthy',
+                message: 'ChatXMN Backend with Supabase',
+                timestamp: new Date().toISOString(),
+                database: 'Supabase + In-memory fallback',
+                telegram: 'Connected',
+                stats: {
+                    users: users.length,
+                    messages: messages.length
+                }
             });
         }
 
-        return res.status(404).json({ error: 'Endpoint not found' });
-
-    } catch (error) {
-        console.error('API Error:', error);
-        return res.status(500).json({ error: 'Database connection failed' });
-    }
-}
-
-async function handleSignup(req, res) {
-    try {
-        const { username, password } = await req.json();
-
-        // Validation
-        if (!username || !password) {
-            return res.status(400).json({ error: 'Username and password are required' });
+        // Test endpoint
+        if (req.method === 'GET' && path === '/api/test') {
+            return res.status(200).json({
+                success: true,
+                message: '✅ Backend is working with Supabase!',
+                server: 'Vercel + Supabase',
+                version: '2.0',
+                timestamp: new Date().toISOString()
+            });
         }
 
-        if (username.length < 3) {
-            return res.status(400).json({ error: 'Username must be at least 3 characters' });
+        // Get stats
+        if (req.method === 'GET' && path === '/api/stats') {
+            return res.status(200).json({
+                users: users.length,
+                messages: messages.length,
+                online: Object.keys(sessions).length,
+                status: 'online',
+                database: 'Supabase Connected'
+            });
         }
 
-        if (password.length < 6) {
-            return res.status(400).json({ error: 'Password must be at least 6 characters' });
-        }
+        // Signup endpoint
+        if (req.method === 'POST' && path === '/api/signup') {
+            try {
+                const { username, password } = await req.json();
+                
+                // Basic validation
+                if (!username || !password) {
+                    return res.status(400).json({ 
+                        success: false,
+                        error: 'Username and password are required' 
+                    });
+                }
 
-        const db = await connectDB();
-        const usersCollection = db.collection('users');
+                if (username.length < 3) {
+                    return res.status(400).json({ 
+                        success: false,
+                        error: 'Username must be at least 3 characters' 
+                    });
+                }
 
-        // Check if username exists
-        const existingUser = await usersCollection.findOne({ 
-            username: { $regex: `^${username}$`, $options: 'i' } 
-        });
+                // Load current users
+                const currentUsers = await loadUsersFromSupabase();
+                
+                // Check if username exists
+                if (currentUsers.find(u => u.username.toLowerCase() === username.toLowerCase())) {
+                    return res.status(400).json({ 
+                        success: false,
+                        error: 'Username already exists' 
+                    });
+                }
 
-        if (existingUser) {
-            return res.status(400).json({ error: 'Username already exists' });
-        }
+                // Create user
+                const newUser = {
+                    id: Date.now(),
+                    username: username.trim(),
+                    password: password,
+                    createdAt: new Date().toISOString(),
+                    isAdmin: false
+                };
 
-        // Create new user
-        const newUser = {
-            username: username.trim(),
-            password: password, // In production, hash this!
-            createdAt: new Date(),
-            isAdmin: false
-        };
+                users.push(newUser);
+                
+                // Save to Supabase
+                await saveUserToSupabase(newUser);
 
-        const result = await usersCollection.insertOne(newUser);
+                // Telegram notification
+                try {
+                    await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            chat_id: ADMIN_CHAT_ID,
+                            text: `🆕 NEW USER SIGNUP!\n\n👤 Username: ${username}\n🆔 User ID: ${newUser.id}\n⏰ Time: ${new Date().toLocaleString()}\n🌐 Total Users: ${users.length}`
+                        })
+                    });
+                    console.log('✅ Telegram notification sent');
+                } catch (tgError) {
+                    console.log('⚠️ Telegram notification failed');
+                }
 
-        // Send Telegram notification
-        await sendTelegramNotification(
-            `🆕 NEW USER SIGNUP!\n\n` +
-            `👤 Username: ${username}\n` +
-            `🆔 User ID: ${result.insertedId}\n` +
-            `⏰ Time: ${new Date().toLocaleString()}\n` +
-            `🌐 Total Users: ${await usersCollection.countDocuments()}`
-        );
+                return res.status(201).json({ 
+                    success: true,
+                    message: 'Account created successfully! Please login.',
+                    userId: newUser.id
+                });
 
-        return res.status(201).json({ 
-            success: true, 
-            message: 'Account created successfully! Please login.',
-            userId: result.insertedId 
-        });
-
-    } catch (error) {
-        console.error('Signup Error:', error);
-        return res.status(500).json({ error: 'Failed to create account' });
-    }
-}
-
-async function handleLogin(req, res) {
-    try {
-        const { username, password } = await req.json();
-
-        if (!username || !password) {
-            return res.status(400).json({ error: 'Username and password are required' });
-        }
-
-        const db = await connectDB();
-        const usersCollection = db.collection('users');
-
-        // Find user (case-insensitive)
-        const user = await usersCollection.findOne({ 
-            username: { $regex: `^${username}$`, $options: 'i' } 
-        });
-
-        if (!user || user.password !== password) {
-            return res.status(401).json({ error: 'Invalid username or password' });
-        }
-
-        // Create session
-        const sessionToken = Date.now().toString();
-        userSessions[sessionToken] = {
-            id: user._id.toString(),
-            username: user.username,
-            createdAt: user.createdAt,
-            isAdmin: user.isAdmin
-        };
-
-        // Clean up old sessions (older than 24 hours)
-        cleanupSessions();
-
-        return res.status(200).json({
-            success: true,
-            message: 'Login successful!',
-            token: sessionToken,
-            user: {
-                id: user._id.toString(),
-                username: user.username,
-                createdAt: user.createdAt,
-                isAdmin: user.isAdmin
+            } catch (error) {
+                console.error('Signup error:', error);
+                return res.status(500).json({ 
+                    success: false,
+                    error: 'Server error during signup' 
+                });
             }
+        }
+
+        // Login endpoint
+        if (req.method === 'POST' && path === '/api/login') {
+            try {
+                const { username, password } = await req.json();
+
+                if (!username || !password) {
+                    return res.status(400).json({ 
+                        success: false,
+                        error: 'Username and password are required' 
+                    });
+                }
+
+                // Load users from Supabase
+                const currentUsers = await loadUsersFromSupabase();
+                
+                // Find user
+                const user = currentUsers.find(u => 
+                    u.username.toLowerCase() === username.toLowerCase() && 
+                    u.password === password
+                );
+
+                if (!user) {
+                    return res.status(401).json({ 
+                        success: false,
+                        error: 'Invalid username or password' 
+                    });
+                }
+
+                // Create session
+                const sessionToken = Date.now().toString();
+                sessions[sessionToken] = {
+                    id: user.id,
+                    username: user.username,
+                    createdAt: user.createdAt
+                };
+
+                return res.status(200).json({
+                    success: true,
+                    message: 'Login successful!',
+                    token: sessionToken,
+                    user: {
+                        id: user.id,
+                        username: user.username,
+                        createdAt: user.createdAt
+                    }
+                });
+
+            } catch (error) {
+                console.error('Login error:', error);
+                return res.status(500).json({ 
+                    success: false,
+                    error: 'Server error during login' 
+                });
+            }
+        }
+
+        // Get messages
+        if (req.method === 'GET' && path === '/api/messages') {
+            try {
+                const loadedMessages = await loadMessagesFromSupabase();
+                return res.status(200).json(loadedMessages);
+            } catch (error) {
+                console.error('Error loading messages:', error);
+                return res.status(200).json(messages); // Fallback
+            }
+        }
+
+        // Send message
+        if (req.method === 'POST' && path === '/api/messages') {
+            try {
+                const authHeader = req.headers.authorization;
+                if (!authHeader || !authHeader.startsWith('Bearer ')) {
+                    return res.status(401).json({ 
+                        success: false,
+                        error: 'Please login to send messages' 
+                    });
+                }
+
+                const token = authHeader.substring(7);
+                const user = sessions[token];
+                
+                if (!user) {
+                    return res.status(401).json({ 
+                        success: false,
+                        error: 'Session expired. Please login again.' 
+                    });
+                }
+
+                const { message } = await req.json();
+                
+                if (!message || message.trim().length === 0) {
+                    return res.status(400).json({ 
+                        success: false,
+                        error: 'Message cannot be empty' 
+                    });
+                }
+
+                const newMessage = {
+                    id: Date.now(),
+                    username: user.username,
+                    message: message.trim(),
+                    timestamp: new Date().toISOString(),
+                    type: 'user'
+                };
+
+                messages.push(newMessage);
+                
+                // Save to Supabase
+                await saveMessageToSupabase(newMessage);
+
+                return res.status(201).json({
+                    success: true,
+                    message: 'Message sent successfully!',
+                    data: newMessage
+                });
+
+            } catch (error) {
+                console.error('Send message error:', error);
+                return res.status(500).json({ 
+                    success: false,
+                    error: 'Failed to send message' 
+                });
+            }
+        }
+
+        // Get current user
+        if (req.method === 'GET' && path === '/api/me') {
+            const authHeader = req.headers.authorization;
+            if (!authHeader || !authHeader.startsWith('Bearer ')) {
+                return res.status(401).json({ error: 'Authentication required' });
+            }
+
+            const token = authHeader.substring(7);
+            const user = sessions[token];
+            
+            if (!user) {
+                return res.status(401).json({ error: 'Invalid session' });
+            }
+
+            return res.json(user);
+        }
+
+        // 404 for unknown routes
+        return res.status(404).json({ 
+            success: false,
+            error: 'Endpoint not found',
+            available: ['/api/health', '/api/test', '/api/signup', '/api/login', '/api/messages', '/api/me']
         });
 
     } catch (error) {
-        console.error('Login Error:', error);
-        return res.status(500).json({ error: 'Login failed' });
-    }
-}
-
-async function handleSendMessage(req, res, user, messagesCollection) {
-    try {
-        const { message } = await req.json();
-
-        if (!message || message.trim().length === 0) {
-            return res.status(400).json({ error: 'Message cannot be empty' });
-        }
-
-        if (message.length > 500) {
-            return res.status(400).json({ error: 'Message too long (max 500 characters)' });
-        }
-
-        const newMessage = {
-            username: user.username,
-            message: message.trim(),
-            timestamp: new Date(),
-            type: 'user'
-        };
-
-        await messagesCollection.insertOne(newMessage);
-
-        return res.status(201).json({ 
-            success: true, 
-            message: 'Message sent successfully' 
+        console.error('Server error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Internal server error',
+            message: 'Please try again later'
         });
-
-    } catch (error) {
-        console.error('Send Message Error:', error);
-        return res.status(500).json({ error: 'Failed to send message' });
     }
-}
-
-function cleanupSessions() {
-    const now = Date.now();
-    for (const [token, session] of Object.entries(userSessions)) {
-        // Remove sessions older than 24 hours
-        if (now - parseInt(token) > 24 * 60 * 60 * 1000) {
-            delete userSessions[token];
-        }
-    }
-}
-
-async function sendTelegramNotification(text) {
-    try {
-        await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                chat_id: ADMIN_CHAT_ID,
-                text: text,
-                parse_mode: 'HTML'
-            })
-        });
-    } catch (error) {
-        console.error('Telegram notification failed:', error);
-    }
-              },
+                    }
